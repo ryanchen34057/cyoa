@@ -53,7 +53,7 @@ def extract_posts_from_html(html):
     return posts
 
 
-def fetch_page_mbasic(session, page_name, max_pages=None):
+def fetch_page_mbasic(session, page_name, max_pages=None, debug=False):
     """使用 mbasic.facebook.com 爬取（較簡單的 HTML 結構）"""
     base_url = f"https://mbasic.facebook.com/{page_name}"
     all_posts = []
@@ -73,6 +73,16 @@ def fetch_page_mbasic(session, page_name, max_pages=None):
 
         html = resp.text
         page_count += 1
+
+        # Debug: 儲存原始 HTML
+        if debug:
+            debug_path = f"output/debug_page_{page_count}.html"
+            os.makedirs("output", exist_ok=True)
+            with open(debug_path, "w", encoding="utf-8") as f:
+                f.write(html)
+            print(f"\n[DEBUG] 已儲存原始 HTML: {debug_path}")
+            print(f"[DEBUG] 回應 URL: {resp.url}")
+            print(f"[DEBUG] HTML 長度: {len(html)} 字元")
 
         # 檢查是否需要登入
         if "login" in resp.url and page_count == 1:
@@ -286,6 +296,7 @@ def main():
     parser.add_argument("--output", "-o", default="output/posts.json", help="輸出檔案路徑")
     parser.add_argument("--pages", "-p", type=int, default=None, help="最多爬幾頁 (不指定則爬到底)")
     parser.add_argument("--preview", action="store_true", help="在終端機預覽貼文")
+    parser.add_argument("--debug", action="store_true", help="儲存原始 HTML 供除錯")
     args = parser.parse_args()
 
     if not os.path.exists(args.cookies):
@@ -298,7 +309,7 @@ def main():
     print("=" * 60)
 
     session = load_cookies(args.cookies)
-    posts = fetch_page_mbasic(session, args.page_name, max_pages=args.pages)
+    posts = fetch_page_mbasic(session, args.page_name, max_pages=args.pages, debug=args.debug)
 
     if not posts:
         print("未取得任何貼文。可能原因：")
