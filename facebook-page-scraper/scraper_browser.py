@@ -128,10 +128,7 @@ def scrape_with_browser(page_name, cookies_path, max_scrolls=50, output_path="ou
             time.sleep(2)
 
             # 等待新內容載入
-            try:
-                page.wait_for_load_state("networkidle", timeout=5000)
-            except Exception:
-                pass
+            time.sleep(1)
 
             current_count = len(all_posts)
             new_this_scroll = current_count - prev_count
@@ -228,10 +225,7 @@ def extract_posts_from_graphql(response_text):
 
         # 解碼 unicode
         if text:
-            try:
-                text = text.encode("utf-8").decode("unicode_escape")
-            except (UnicodeDecodeError, UnicodeEncodeError):
-                text = text.replace("\\n", "\n").replace('\\"', '"').replace("\\/", "/")
+            text = decode_fb_text(text)
 
         if timestamp > 0 or text:
             seen_ids.add(pid)
@@ -246,6 +240,22 @@ def extract_posts_from_graphql(response_text):
             posts.append(post)
 
     return posts
+
+
+def decode_fb_text(text):
+    """安全解碼 Facebook JSON 中的 Unicode 跳脫字元"""
+    # 用 json.loads 解碼，這是最安全的方式
+    try:
+        text = json.loads('"' + text + '"')
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        # 手動處理常見跳脫
+        text = text.replace("\\n", "\n")
+        text = text.replace("\\t", "\t")
+        text = text.replace('\\"', '"')
+        text = text.replace("\\/", "/")
+    # 移除 surrogate 字元（會導致 encode 錯誤）
+    text = text.encode("utf-8", errors="surrogatepass").decode("utf-8", errors="replace")
+    return text
 
 
 def extract_posts_from_dom(page):
@@ -310,6 +320,8 @@ def format_post(post):
             pass
 
     text = post.get("text", "(無文字內容)")
+    # 移除可能殘留的 surrogate 字元
+    text = text.encode("utf-8", errors="surrogatepass").decode("utf-8", errors="replace")
     if len(text) > 300:
         text = text[:300] + "..."
 
