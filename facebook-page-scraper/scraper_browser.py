@@ -244,17 +244,17 @@ def extract_posts_from_graphql(response_text):
 
 def decode_fb_text(text):
     """安全解碼 Facebook JSON 中的 Unicode 跳脫字元"""
-    # 用 json.loads 解碼，這是最安全的方式
+    # 先處理 surrogate pairs（如 emoji）：\ud83d\ude00 -> 實際字元
+    # json.loads 能正確處理這些
     try:
         text = json.loads('"' + text + '"')
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        # 手動處理常見跳脫
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
         text = text.replace("\\n", "\n")
         text = text.replace("\\t", "\t")
         text = text.replace('\\"', '"')
         text = text.replace("\\/", "/")
-    # 移除 surrogate 字元（會導致 encode 錯誤）
-    text = text.encode("utf-8", errors="surrogatepass").decode("utf-8", errors="replace")
+    # 移除所有 surrogate 字元（U+D800 ~ U+DFFF）
+    text = re.sub(r'[\ud800-\udfff]', '', text)
     return text
 
 
@@ -320,8 +320,7 @@ def format_post(post):
             pass
 
     text = post.get("text", "(無文字內容)")
-    # 移除可能殘留的 surrogate 字元
-    text = text.encode("utf-8", errors="surrogatepass").decode("utf-8", errors="replace")
+    text = re.sub(r'[\ud800-\udfff]', '', text)
     if len(text) > 300:
         text = text[:300] + "..."
 
@@ -342,8 +341,17 @@ def format_post(post):
 def save_to_json(posts, output_path):
     """儲存結果為 JSON"""
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+    # 清理所有文字欄位中的 surrogate 字元
+    clean_posts = []
+    for post in posts:
+        clean = {}
+        for k, v in post.items():
+            if isinstance(v, str):
+                v = re.sub(r'[\ud800-\udfff]', '', v)
+            clean[k] = v
+        clean_posts.append(clean)
     with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(posts, f, ensure_ascii=False, indent=2)
+        json.dump(clean_posts, f, ensure_ascii=False, indent=2)
     print(f"已儲存至 {output_path}")
 
 
