@@ -174,106 +174,76 @@ def scrape_with_browser(page_name, cookies_path, max_scrolls=50, output_path="ou
 
 
 def extract_posts_from_graphql(response_text):
-    """從 GraphQL 回應中提取貼文"""
+    """從 GraphQL 回應中用 regex 提取貼文（Facebook 資料散布在不同層級）"""
     posts = []
+    seen_ids = set()
 
-    for line in response_text.strip().split("\n"):
-        if not line.strip():
+    # Facebook 的結構:
+    #   "post_id":"122160257420700878"
+    #   "creation_time":1774868967 (在 story 物件裡)
+    #   "message":{"text":"貼文內容..."} (在巢狀 message 裡)
+    #   "url":"https://www.facebook.com/.../posts/..."
+
+    # 策略: 找所有 post_id，然後在附近找 creation_time、message.text、url
+
+    post_id_pattern = re.compile(r'"post_id":"(\d+)"')
+    creation_time_pattern = re.compile(r'"creation_time":(\d{10})')
+    message_text_pattern = re.compile(r'"message":\{(?:[^{}]*"text":"((?:[^"\\]|\\.)*?)")')
+    url_pattern = re.compile(r'"url":"(https:\\/\\/www\.facebook\.com\\/[^"]*?\\/posts\\/[^"]*?)"')
+
+    # 找所有 post_id 的位置
+    post_id_positions = {}
+    for m in post_id_pattern.finditer(response_text):
+        pid = m.group(1)
+        if pid not in post_id_positions:
+            post_id_positions[pid] = m.start()
+
+    for pid, pos in post_id_positions.items():
+        if pid in seen_ids:
             continue
-        try:
-            data = json.loads(line)
-        except json.JSONDecodeError:
-            continue
 
-        found = find_posts_in_json(data)
-        posts.extend(found)
+        # 在 post_id 前後 5000 字元範圍內搜尋相關資料
+        search_start = max(0, pos - 5000)
+        search_end = min(len(response_text), pos + 5000)
+        nearby = response_text[search_start:search_end]
 
-    return posts
+        # 找 creation_time
+        timestamp = 0
+        ct_match = creation_time_pattern.search(nearby)
+        if ct_match:
+            timestamp = int(ct_match.group(1))
 
+        # 找 message text (可能有多個，取最長的)
+        text = ""
+        for mt_match in message_text_pattern.finditer(nearby):
+            candidate = mt_match.group(1)
+            if len(candidate) > len(text):
+                text = candidate
 
-def find_posts_in_json(data, depth=0):
-    """遞迴搜尋 JSON 中的貼文"""
-    posts = []
+        # 找 URL
+        url = ""
+        url_match = url_pattern.search(nearby)
+        if url_match:
+            url = url_match.group(1).replace("\\/", "/")
 
-    if depth > 30 or data is None:
-        return posts
+        # 解碼 unicode
+        if text:
+            try:
+                text = text.encode("utf-8").decode("unicode_escape")
+            except (UnicodeDecodeError, UnicodeEncodeError):
+                text = text.replace("\\n", "\n").replace('\\"', '"').replace("\\/", "/")
 
-    if isinstance(data, dict):
-        # Facebook 貼文的典型結構:
-        # node -> comet_sections -> content -> story -> message -> text
-        # 或 node -> post_id, creation_time, message
-
-        has_creation_time = "creation_time" in data
-        has_message = "message" in data
-
-        # 完整貼文節點
-        if has_creation_time and has_message:
-            text = ""
-            msg = data.get("message")
-            if isinstance(msg, dict):
-                text = msg.get("text", "")
-            elif isinstance(msg, str):
-                text = msg
-
+        if timestamp > 0 or text:
+            seen_ids.add(pid)
             post = {
-                "id": str(data.get("id", data.get("post_id", ""))),
+                "id": pid,
                 "text": text,
-                "created_time": datetime.fromtimestamp(data["creation_time"]).isoformat(),
-                "timestamp": data["creation_time"],
+                "timestamp": timestamp,
+                "url": url,
             }
-
-            # 互動數據
-            feedback = data.get("feedback") or data.get("comet_feed_ufi_container") or {}
-            if isinstance(feedback, dict):
-                rc = feedback.get("reaction_count") or feedback.get("reactors")
-                if isinstance(rc, dict):
-                    post["reaction_count"] = rc.get("count", rc.get("total_count", 0))
-                cc = feedback.get("comment_count") or feedback.get("total_comment_count")
-                if isinstance(cc, dict):
-                    post["comment_count"] = cc.get("total_count", cc.get("count", 0))
-                sc = feedback.get("share_count")
-                if isinstance(sc, dict):
-                    post["share_count"] = sc.get("count", sc.get("total_count", 0))
-
-            # URL
-            if data.get("url"):
-                post["url"] = data["url"]
-            elif data.get("permalink_url"):
-                post["url"] = data["permalink_url"]
-
-            if post["id"]:
-                posts.append(post)
-                return posts  # 不再往下找
-
-        # 另一種結構: story node
-        if data.get("__typename") in ("Story", "Post") and has_creation_time:
-            text = ""
-            msg = data.get("message")
-            if isinstance(msg, dict):
-                text = msg.get("text", "")
-
-            post = {
-                "id": str(data.get("id", data.get("story_id", ""))),
-                "text": text,
-                "created_time": datetime.fromtimestamp(data["creation_time"]).isoformat(),
-                "timestamp": data["creation_time"],
-                "url": data.get("url", ""),
-            }
-            if post["id"]:
-                posts.append(post)
-                return posts
-
-        # 遞迴搜尋子節點
-        for key, value in data.items():
-            if isinstance(value, (dict, list)):
-                found = find_posts_in_json(value, depth + 1)
-                posts.extend(found)
-
-    elif isinstance(data, list):
-        for item in data:
-            if isinstance(item, (dict, list)):
-                found = find_posts_in_json(item, depth + 1)
-                posts.extend(found)
+            if timestamp > 0:
+                post["created_time"] = datetime.fromtimestamp(timestamp).isoformat()
+            posts.append(post)
 
     return posts
 
