@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>台指期日盤紀錄</title>
+<style>
+  :root { --up:#d33; --down:#093; --bg:#f6f7f9; --line:#e2e5ea; }
+  * { box-sizing: border-box; }
+  body { font-family: "Segoe UI", "Microsoft JhengHei", system-ui, sans-serif; margin:0; background:var(--bg); color:#222; }
+  header { background:#1f2937; color:#fff; padding:16px 24px; }
+  header h1 { margin:0; font-size:20px; }
+  header p { margin:4px 0 0; font-size:13px; opacity:.8; }
+  main { max-width:1180px; margin:0 auto; padding:20px; }
+  .cards { display:flex; gap:12px; flex-wrap:wrap; margin-bottom:16px; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:8px; padding:12px 16px; min-width:150px; }
+  .card .label { font-size:12px; color:#667; }
+  .card .value { font-size:22px; font-weight:600; margin-top:2px; }
+  .panel { background:#fff; border:1px solid var(--line); border-radius:8px; padding:16px; margin-bottom:16px; }
+  .panel h2 { margin:0 0 12px; font-size:15px; }
+  form.inline { display:flex; gap:8px; flex-wrap:wrap; align-items:end; }
+  .field { display:flex; flex-direction:column; gap:3px; }
+  .field label { font-size:12px; color:#556; }
+  input { padding:7px 8px; border:1px solid #cbd1da; border-radius:6px; font-size:14px; width:120px; }
+  button { padding:8px 14px; border:0; border-radius:6px; background:#2563eb; color:#fff; font-size:14px; cursor:pointer; }
+  button.secondary { background:#475569; }
+  button.danger { background:#b91c1c; padding:4px 9px; font-size:12px; }
+  a.btn { display:inline-block; padding:8px 14px; border-radius:6px; background:#475569; color:#fff; text-decoration:none; font-size:14px; }
+  .flash { padding:10px 14px; border-radius:6px; margin-bottom:14px; font-size:14px; }
+  .flash.ok { background:#e6f6ec; color:#0a5; border:1px solid #b6e2c6; }
+  .flash.err { background:#fdecec; color:#b30000; border:1px solid #f3c2c2; }
+  table { width:100%; border-collapse:collapse; background:#fff; font-size:13px; }
+  th, td { padding:7px 8px; border-bottom:1px solid var(--line); text-align:right; white-space:nowrap; }
+  th { background:#f0f2f5; position:sticky; top:0; font-weight:600; }
+  td.date, th.date { text-align:left; }
+  .up { color:var(--up); }
+  .down { color:var(--down); }
+  .wrap { overflow-x:auto; border:1px solid var(--line); border-radius:8px; }
+  .empty { padding:30px; text-align:center; color:#889; }
+  small.note { color:#778; }
+</style>
+</head>
+<body>
+<header>
+  <h1>台指期 (TX) 日盤紀錄</h1>
+  <p>每日振幅、跳空、漲跌幅 — 資料來源：台灣期貨交易所 · 近月主力合約</p>
+</header>
+<main>
+
+  {{if .Msg}}<div class="flash ok">{{.Msg}}</div>{{end}}
+  {{if .Err}}<div class="flash err">{{.Err}}</div>{{end}}
+
+  <div class="cards">
+    <div class="card"><div class="label">紀錄天數</div><div class="value">{{.Count}}</div></div>
+    <div class="card"><div class="label">平均振幅</div><div class="value">{{f2 .AvgAmp}}%</div></div>
+    <div class="card"><div class="label">平均漲跌幅</div><div class="value {{sign .AvgChg}}">{{f2 .AvgChg}}%</div></div>
+  </div>
+
+  <div class="panel">
+    <h2>自動抓取期交所資料</h2>
+    <form class="inline" method="post" action="/fetch">
+      <div class="field"><label>起始日</label><input type="date" name="start" value="{{.Today}}"></div>
+      <div class="field"><label>結束日</label><input type="date" name="end" value="{{.Today}}"></div>
+      <button type="submit">抓取 / 更新</button>
+      <a class="btn" href="/export.csv">匯出 CSV</a>
+    </form>
+    <p style="margin:8px 0 0"><small class="note">預設抓取今日；可設定區間補抓歷史。假日 / 尚未收盤會查無資料。</small></p>
+  </div>
+
+  <div class="panel">
+    <h2>手動新增 / 修正</h2>
+    <form class="inline" method="post" action="/add">
+      <div class="field"><label>日期</label><input type="date" name="date" value="{{.Today}}" required></div>
+      <div class="field"><label>開盤</label><input type="number" step="0.01" name="open" required></div>
+      <div class="field"><label>最高</label><input type="number" step="0.01" name="high" required></div>
+      <div class="field"><label>最低</label><input type="number" step="0.01" name="low" required></div>
+      <div class="field"><label>收盤</label><input type="number" step="0.01" name="close" required></div>
+      <div class="field"><label>昨收</label><input type="number" step="0.01" name="prev_close" required></div>
+      <div class="field"><label>成交量</label><input type="number" name="volume"></div>
+      <button class="secondary" type="submit">儲存</button>
+    </form>
+  </div>
+
+  <div class="wrap">
+  {{if .Records}}
+    <table>
+      <thead>
+        <tr>
+          <th class="date">日期</th><th>合約</th>
+          <th>開盤</th><th>最高</th><th>最低</th><th>收盤</th><th>昨收</th>
+          <th>振幅(點)</th><th>振幅%</th>
+          <th>跳空(點)</th><th>跳空%</th>
+          <th>漲跌(點)</th><th>漲跌%</th>
+          <th>成交量</th><th></th>
+        </tr>
+      </thead>
+      <tbody>
+      {{range .Records}}
+        <tr>
+          <td class="date">{{.Date}}</td>
+          <td class="date">{{.Contract}}</td>
+          <td>{{f2 .Open}}</td><td>{{f2 .High}}</td><td>{{f2 .Low}}</td><td>{{f2 .Close}}</td><td>{{f2 .PrevClose}}</td>
+          <td>{{f2 .AmplitudePt}}</td><td>{{f2 .AmplitudePct}}%</td>
+          <td class="{{sign .GapPt}}">{{f2 .GapPt}}</td><td class="{{sign .GapPct}}">{{f2 .GapPct}}%</td>
+          <td class="{{sign .ChangePt}}">{{f2 .ChangePt}}</td><td class="{{sign .ChangePct}}">{{f2 .ChangePct}}%</td>
+          <td>{{.Volume}}</td>
+          <td>
+            <form method="post" action="/delete" onsubmit="return confirm('刪除 {{.Date}} ?')">
+              <input type="hidden" name="date" value="{{.Date}}">
+              <button class="danger" type="submit">刪</button>
+            </form>
+          </td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table>
+  {{else}}
+    <div class="empty">尚無資料。點上方「抓取 / 更新」開始紀錄。</div>
+  {{end}}
+  </div>
+
+</main>
+</body>
+</html>
